@@ -22,8 +22,8 @@ export class CreateInquiryDto {
 
   @IsString()
   @IsNotEmpty({ message: 'phone is required' })
-  @Matches(/^[\d-]+$/, {
-    message: 'phone must contain only digits and hyphens',
+  @Matches(/^\+?[\d-]+$/, {
+    message: 'phone must be a valid phone number',
   })
   phone: string;
 

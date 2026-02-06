@@ -7,17 +7,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  password     String
+  name         String
+  refreshToken String?  @map("refresh_token")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
 model Inquiry {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   name             String
-  companyName      String   @map("company_name")
+  companyName      String    @map("company_name")
   email            String
   phone            String
-  inquiryType      String   @map("inquiry_type")
+  inquiryType      String    @map("inquiry_type")
   message          String
-  marketingConsent Boolean  @map("marketing_consent")
-  privacyConsent   Boolean  @map("privacy_consent")
-  createdAt        DateTime @default(now()) @map("created_at")
+  status           String    @default("PENDING")
+  marketingConsent Boolean   @map("marketing_consent")
+  privacyConsent   Boolean   @map("privacy_consent")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  deletedAt        DateTime? @map("deleted_at")
 
   @@map("inquiries")
 }

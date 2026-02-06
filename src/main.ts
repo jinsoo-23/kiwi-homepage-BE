@@ -1,14 +1,18 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Cookie Parser
+  app.use(cookieParser());
+
   // CORS 설정
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5000',
+    origin: process.env.CORS_ORIGIN || 'http://localhost:5002',
     credentials: true,
   });
 
