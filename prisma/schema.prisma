@@ -1,0 +1,32 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Inquiry {
+  id               String   @id @default(uuid())
+  name             String
+  companyName      String   @map("company_name")
+  email            String
+  phone            String
+  inquiryType      String   @map("inquiry_type")
+  message          String
+  marketingConsent Boolean  @map("marketing_consent")
+  privacyConsent   Boolean  @map("privacy_consent")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("inquiries")
+}
+
+model PrivacyPolicy {
+  id        String   @id @default(uuid())
+  content   String
+  version   String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("privacy_policies")
+}
