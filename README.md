@@ -15,28 +15,7 @@ Kiwi LMS 제품 홈페이지 백엔드 API 서버
 
 ### 환경 설정
 
-```bash
-cp .env.example .env
-```
-
-```env
-# Database
-DATABASE_URL="postgresql://user:password@localhost:5432/linus_kiwi?schema=public"
-
-# Server
-PORT=5001
-CORS_ORIGIN="http://localhost:5002"
-
-# Teams Webhook (선택 - 미설정 시 알림 스킵)
-TEAMS_WEBHOOK_URL=""
-
-# JWT
-JWT_SECRET="your-jwt-secret-key"
-JWT_REFRESH_SECRET="your-jwt-refresh-secret-key"
-
-# Admin (시드용)
-ADMIN_INITIAL_PASSWORD="admin1234"
-```
+`.env` 파일을 별도로 전달받아 프로젝트 루트에 위치시키세요.
 
 ### 설치 및 실행
 
