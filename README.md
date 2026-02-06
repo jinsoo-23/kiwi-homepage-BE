@@ -1,173 +1,141 @@
-# Linus Kiwi Homepage Backend
+# Kiwi Homepage Backend
 
-고객 문의 및 동의 관리 시스템 백엔드 API
+Kiwi LMS 제품 홈페이지 백엔드 API 서버
 
 ## 기술 스택
 
 - **Runtime**: Node.js 20+
 - **Framework**: NestJS
-- **Language**: TypeScript 5.x (strict)
+- **Language**: TypeScript 5 (strict)
 - **ORM**: Prisma
 - **Database**: PostgreSQL
+- **Auth**: JWT + HttpOnly Cookie
 
 ## 시작하기
 
-### 1. 의존성 설치
+### 환경 설정
 
 ```bash
-yarn install
+cp .env.example .env
 ```
 
-### 2. 환경변수 설정
-
-`.env` 파일을 수정하세요:
-
-```bash
+```env
 # Database
 DATABASE_URL="postgresql://user:password@localhost:5432/linus_kiwi?schema=public"
 
 # Server
-PORT=4000
-CORS_ORIGIN="http://localhost:3000"
+PORT=5001
+CORS_ORIGIN="http://localhost:5002"
 
 # Teams Webhook (선택 - 미설정 시 알림 스킵)
 TEAMS_WEBHOOK_URL=""
+
+# JWT
+JWT_SECRET="your-jwt-secret-key"
+JWT_REFRESH_SECRET="your-jwt-refresh-secret-key"
+
+# Admin (시드용)
+ADMIN_INITIAL_PASSWORD="admin1234"
 ```
 
-### 3. 데이터베이스 마이그레이션
+### 설치 및 실행
 
 ```bash
-# 마이그레이션 생성 및 적용
-npx prisma migrate dev --name init
+# 의존성 설치
+yarn install
 
-# Prisma Client 생성 (마이그레이션 시 자동 생성됨)
-npx prisma generate
-```
+# DB 마이그레이션
+npx prisma migrate dev
 
-### 4. 서버 실행
+# 시드 데이터 (Admin 계정 생성)
+npx prisma db seed
 
-```bash
-# 개발 모드
+# 개발 서버 실행
 yarn start:dev
 
 # 프로덕션 빌드
 yarn build
+
+# 프로덕션 실행
 yarn start:prod
 ```
 
-서버가 `http://localhost:4000`에서 실행됩니다.
+### Admin 계정
+
+시드 실행 후 생성되는 기본 계정:
+- **Email**: admin@linus.kr
+- **Password**: `ADMIN_INITIAL_PASSWORD` 환경변수 값
 
 ## API 엔드포인트
 
-### 문의 생성
+### Public API
 
-```
-POST /api/v1/inquiries
-```
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| POST | `/api/v1/inquiries` | 문의 생성 |
+| PATCH | `/api/v1/inquiries/marketing-consent` | 광고 수신 동의 철회 |
+| GET | `/api/v1/privacy-policy` | 개인정보 처리방침 조회 |
 
-**Request Body:**
-```json
-{
-  "name": "홍길동",
-  "email": "hong@company.com",
-  "phone": "010-1234-5678",
-  "inquiryType": "kiwi",
-  "message": "문의 내용입니다.",
-  "marketingConsent": true,
-  "privacyConsent": true
-}
-```
+### Admin API (인증 필요)
 
-**Response:**
-```json
-{
-  "id": "uuid",
-  "createdAt": "2026-01-20T10:30:00Z"
-}
-```
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| POST | `/api/v1/admin/auth/login` | 로그인 |
+| POST | `/api/v1/admin/auth/logout` | 로그아웃 |
+| POST | `/api/v1/admin/auth/refresh` | 토큰 갱신 |
+| GET | `/api/v1/admin/auth/me` | 인증 상태 확인 |
+| GET | `/api/v1/admin/inquiries` | 문의 목록 조회 |
+| GET | `/api/v1/admin/inquiries/:id` | 문의 상세 조회 |
+| PATCH | `/api/v1/admin/inquiries/:id/status` | 상태 변경 |
+| DELETE | `/api/v1/admin/inquiries/:id` | 삭제 (Soft Delete) |
+| GET | `/api/v1/admin/inquiries/export` | 엑셀 다운로드 |
 
-### 광고성 정보 수신 동의 철회
+### 문의 목록 Query Parameters
 
-```
-PATCH /api/v1/inquiries/marketing-consent
-```
-
-**Request Body:**
-```json
-{
-  "email": "hong@company.com",
-  "phone": "010-1234-5678"
-}
-```
-
-**Response:**
-```json
-{
-  "marketingConsent": false
-}
-```
-
-### 개인정보 처리방침 조회
-
-```
-GET /api/v1/privacy-policy
-```
-
-**Response:**
-```json
-{
-  "content": "개인정보 처리방침 내용...",
-  "version": "v1.0",
-  "updatedAt": "2026-01-15T12:00:00Z"
-}
-```
-
-### 문의 데이터 엑셀 다운로드 (내부용)
-
-```
-GET /api/v1/inquiries/export
-```
-
-- Content-Type: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-- 파일명: `inquiries_YYYYMMDD.xlsx`
+| 파라미터 | 타입 | 설명 |
+|----------|------|------|
+| page | number | 페이지 번호 (기본값: 1) |
+| limit | number | 페이지당 항목 수 (5, 10, 25 중 선택, 기본값: 10) |
+| search | string | 검색어 (이름, 이메일, 기업명) |
+| status | string | 상태 필터 (PENDING, COMPLETED) |
+| marketingConsent | boolean | 광고 수신 동의 필터 |
 
 ## 에러 코드
 
-| errorCode         | 설명                |
-| ----------------- | ------------------- |
-| INVALID_REQUEST   | 요청 값 검증 실패   |
-| INQUIRY_NOT_FOUND | 일치 문의 없음      |
-| TEAMS_API_ERROR   | Teams 알림 실패     |
+| errorCode | 설명 |
+|-----------|------|
+| INVALID_REQUEST | 요청 값 검증 실패 |
+| INQUIRY_NOT_FOUND | 일치 문의 없음 |
+| INVALID_CREDENTIALS | 로그인 실패 |
+| UNAUTHORIZED | 인증 필요 |
+| INVALID_REFRESH_TOKEN | 유효하지 않은 Refresh Token |
+| TEAMS_API_ERROR | Teams 알림 실패 |
 | TEAMS_API_TIMEOUT | Teams 호출 타임아웃 |
-
-## 개발
-
-```bash
-# 린트
-yarn lint
-
-# 빌드
-yarn build
-
-# 테스트
-yarn test
-```
 
 ## 프로젝트 구조
 
 ```
 src/
-├── main.ts                 # 애플리케이션 진입점
-├── app.module.ts           # 루트 모듈
+├── main.ts
+├── app.module.ts
 ├── common/
-│   ├── dto/               # 공통 DTO
-│   └── filters/           # 예외 필터
-├── inquiries/             # 문의 모듈
 │   ├── dto/
-│   ├── inquiries.controller.ts
-│   ├── inquiries.service.ts
-│   └── inquiries.module.ts
-├── privacy-policy/        # 개인정보 처리방침 모듈
-├── prisma/                # Prisma 서비스
-└── teams/                 # Teams 알림 서비스
+│   └── filters/
+├── admin/
+│   ├── auth/           # 인증 (로그인, JWT)
+│   └── inquiries/      # 문의 관리
+├── inquiries/          # 문의 생성 (Public)
+├── privacy-policy/     # 개인정보 처리방침
+├── prisma/             # Prisma 서비스
+└── teams/              # Teams 알림
+```
+
+## 스크립트
+
+```bash
+yarn start:dev   # 개발 서버 (watch 모드)
+yarn build       # 프로덕션 빌드
+yarn start:prod  # 프로덕션 실행
+yarn lint        # ESLint 검사
+yarn test        # 테스트 실행
 ```
