@@ -35,6 +35,9 @@ RUN npx prisma generate
 # NestJS 빌드
 RUN yarn build
 
+# Seed 파일 별도 컴파일 (prisma/seed.ts -> dist/prisma/seed.js)
+RUN npx tsc prisma/seed.ts --outDir dist --esModuleInterop --skipLibCheck
+
 # ===========================================
 # Stage 3: Runner (Production)
 # ===========================================
@@ -68,5 +71,5 @@ EXPOSE 5001
 
 ENV PORT=5001
 
-# 실행 (마이그레이션 후 앱 시작)
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+# 실행 (마이그레이션 → seed → 앱 시작)
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/prisma/seed.js && node dist/src/main"]
