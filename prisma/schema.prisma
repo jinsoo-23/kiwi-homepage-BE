@@ -32,16 +32,21 @@ model Customer {
 }
 
 model Inquiry {
-  id          String    @id @default(uuid())
-  customerId  String    @map("customer_id")
-  name        String
-  companyName String    @map("company_name")
-  phone       String
-  inquiryType String    @map("inquiry_type")
-  message     String
-  status      String    @default("PENDING")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  deletedAt   DateTime? @map("deleted_at")
+  id             String    @id @default(uuid())
+  customerId     String    @map("customer_id")
+  idempotencyKey String?   @unique @map("idempotency_key")
+  name           String
+  companyName    String    @map("company_name")
+  phone          String
+  inquiryType    String    @map("inquiry_type")
+  message        String
+  status         String    @default("PENDING")
+  teamsStatus    String    @default("PENDING") @map("teams_status")
+  retryCount     Int       @default(0) @map("retry_count")
+  lastError      String?   @map("last_error")
+  sentAt         DateTime? @map("sent_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  deletedAt      DateTime? @map("deleted_at")
 
   customer Customer @relation(fields: [customerId], references: [id])
 

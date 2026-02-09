@@ -9,7 +9,7 @@ import {
   UseGuards,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { FastifyReply } from 'fastify';
 import { AdminInquiriesService } from './admin-inquiries.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { QueryInquiriesDto } from './dto/query-inquiries.dto';
@@ -26,15 +26,15 @@ export class AdminInquiriesController {
   }
 
   @Get('export')
-  async export(@Res() res: Response) {
+  async export(@Res() res: FastifyReply) {
     const buffer = await this.adminInquiriesService.exportToExcel();
     const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
 
-    res.setHeader(
+    res.header(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
-    res.setHeader(
+    res.header(
       'Content-Disposition',
       `attachment; filename=inquiries_${date}.xlsx`,
     );

@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-jwt';
-import { Request } from 'express';
+import type { FastifyRequest } from 'fastify';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 interface JwtPayload {
@@ -9,7 +9,7 @@ interface JwtPayload {
   email: string;
 }
 
-function extractJwtFromCookie(req: Request): string | null {
+function extractJwtFromCookie(req: FastifyRequest): string | null {
   if (req.cookies && req.cookies.accessToken) {
     return req.cookies.accessToken as string;
   }

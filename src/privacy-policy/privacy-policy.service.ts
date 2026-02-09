@@ -1,6 +1,6 @@
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ErrorCode } from '../common/dto/error-response.dto';
+import { ErrorCode } from '../shared/constants/error-codes';
 
 export interface PrivacyPolicyResponseDto {
   content: string;

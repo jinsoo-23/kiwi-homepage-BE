@@ -9,7 +9,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { FastifyReply } from 'fastify';
 import { InquiriesService } from './inquiries.service';
 import {
   CreateInquiryDto,
@@ -21,6 +21,7 @@ import {
   UpdateConsentDto,
   UpdateConsentResponseDto,
 } from './dto/update-marketing-consent.dto';
+import { IdempotencyKey } from '../shared/idempotency';
 
 @Controller('api/v1')
 export class InquiriesController {
@@ -30,8 +31,9 @@ export class InquiriesController {
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body() createInquiryDto: CreateInquiryDto,
+    @IdempotencyKey() idempotencyKey?: string,
   ): Promise<CreateInquiryResponseDto> {
-    return this.inquiriesService.create(createInquiryDto);
+    return this.inquiriesService.create(createInquiryDto, idempotencyKey);
   }
 
   @Get('consents')
@@ -51,18 +53,18 @@ export class InquiriesController {
   }
 
   @Get('inquiries/export')
-  async exportToExcel(@Res() res: Response): Promise<void> {
+  async exportToExcel(@Res() res: FastifyReply): Promise<void> {
     const buffer = await this.inquiriesService.exportToExcel();
 
     const today = new Date();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
     const filename = `inquiries_${dateStr}.xlsx`;
 
-    res.setHeader(
+    res.header(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     );
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.header('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buffer);
   }
 }
