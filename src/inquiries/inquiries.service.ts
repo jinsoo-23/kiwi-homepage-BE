@@ -11,7 +11,7 @@ import {
   UpdateConsentDto,
   UpdateConsentResponseDto,
 } from './dto/update-marketing-consent.dto';
-import { ErrorCode } from '../common/dto/error-response.dto';
+import { ErrorCode } from '../shared/constants/error-codes';
 
 @Injectable()
 export class InquiriesService {
@@ -20,7 +20,10 @@ export class InquiriesService {
     private readonly teamsService: TeamsService,
   ) {}
 
-  async create(dto: CreateInquiryDto): Promise<CreateInquiryResponseDto> {
+  async create(
+    dto: CreateInquiryDto,
+    idempotencyKey?: string,
+  ): Promise<CreateInquiryResponseDto> {
     // privacyConsent 검증
     if (dto.privacyConsent !== true) {
       throw new HttpException(
@@ -30,6 +33,24 @@ export class InquiriesService {
         },
         HttpStatus.BAD_REQUEST,
       );
+    }
+
+    // Idempotency Key로 기존 문의 조회 (중복 제출 방지)
+    if (idempotencyKey) {
+      const existingInquiry = await this.prisma.inquiry.findUnique({
+        where: { idempotencyKey },
+        include: { customer: true },
+      });
+
+      if (existingInquiry) {
+        // 이미 처리된 요청이면 기존 응답 반환
+        return {
+          id: existingInquiry.id,
+          createdAt: existingInquiry.createdAt,
+          hasPreviousInquiry: true,
+          message: '이미 처리된 요청입니다.',
+        };
+      }
     }
 
     // Customer 조회 또는 생성
@@ -45,10 +66,11 @@ export class InquiriesService {
       });
     }
 
-    // Inquiry 생성
+    // Inquiry 생성 (idempotencyKey 포함)
     const inquiry = await this.prisma.inquiry.create({
       data: {
         customerId: customer.id,
+        idempotencyKey,
         name: dto.name,
         companyName: dto.companyName,
         phone: dto.phone,

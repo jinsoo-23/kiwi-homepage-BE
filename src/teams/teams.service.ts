@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ErrorCode } from '../common/dto/error-response.dto';
+import { ErrorCode } from '../shared/constants/error-codes';
 
 interface InquiryData {
   name: string;

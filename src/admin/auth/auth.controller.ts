@@ -6,15 +6,15 @@ import {
   UseGuards,
   Request,
   Res,
+  UnauthorizedException,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
-interface RequestWithUser extends Request {
+interface RequestWithUser extends FastifyRequest {
   user: { id: string; email: string; name: string };
-  cookies: { refreshToken?: string };
 }
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -32,20 +32,20 @@ export class AuthController {
   @Post('login')
   async login(
     @Body() loginDto: LoginDto,
-    @Res({ passthrough: true }) res: Response,
+    @Res({ passthrough: true }) res: FastifyReply,
   ) {
     const result = await this.authService.login(loginDto);
 
-    res.cookie('accessToken', result.accessToken, {
+    res.setCookie('accessToken', result.accessToken, {
       ...COOKIE_OPTIONS,
       path: '/api/v1/admin',
-      maxAge: 60 * 60 * 1000, // 1시간
+      maxAge: 60 * 60, // 1시간 (초 단위)
     });
 
-    res.cookie('refreshToken', result.refreshToken, {
+    res.setCookie('refreshToken', result.refreshToken, {
       ...COOKIE_OPTIONS,
       path: '/api/v1/admin/auth',
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7일
+      maxAge: 7 * 24 * 60 * 60, // 7일 (초 단위)
     });
 
     return { user: result.user };
@@ -53,12 +53,12 @@ export class AuthController {
 
   @Post('refresh')
   async refresh(
-    @Request() req: RequestWithUser,
-    @Res({ passthrough: true }) res: Response,
+    @Request() req: FastifyRequest,
+    @Res({ passthrough: true }) res: FastifyReply,
   ) {
     const refreshToken = req.cookies?.refreshToken;
     if (!refreshToken) {
-      return res.status(401).json({
+      throw new UnauthorizedException({
         errorCode: 'INVALID_REFRESH_TOKEN',
         message: '유효하지 않은 Refresh Token입니다',
       });
@@ -66,10 +66,10 @@ export class AuthController {
 
     const result = await this.authService.refresh(refreshToken);
 
-    res.cookie('accessToken', result.accessToken, {
+    res.setCookie('accessToken', result.accessToken, {
       ...COOKIE_OPTIONS,
       path: '/api/v1/admin',
-      maxAge: 60 * 60 * 1000,
+      maxAge: 60 * 60,
     });
 
     return { success: true };
@@ -79,20 +79,16 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async logout(
     @Request() req: RequestWithUser,
-    @Res({ passthrough: true }) res: Response,
+    @Res({ passthrough: true }) res: FastifyReply,
   ) {
     await this.authService.logout(req.user.id);
 
-    res.cookie('accessToken', '', {
-      ...COOKIE_OPTIONS,
+    res.clearCookie('accessToken', {
       path: '/api/v1/admin',
-      maxAge: 0,
     });
 
-    res.cookie('refreshToken', '', {
-      ...COOKIE_OPTIONS,
+    res.clearCookie('refreshToken', {
       path: '/api/v1/admin/auth',
-      maxAge: 0,
     });
 
     return { success: true };

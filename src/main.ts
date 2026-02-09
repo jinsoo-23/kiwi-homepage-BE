@@ -1,14 +1,27 @@
 import { NestFactory } from '@nestjs/core';
+import {
+  FastifyAdapter,
+  NestFastifyApplication,
+} from '@nestjs/platform-fastify';
 import { ValidationPipe } from '@nestjs/common';
-import cookieParser from 'cookie-parser';
+import { Logger } from 'nestjs-pino';
+import fastifyCookie from '@fastify/cookie';
 import { AppModule } from './app.module';
-import { GlobalExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestFastifyApplication>(
+    AppModule,
+    new FastifyAdapter(),
+    {
+      bufferLogs: true,
+    },
+  );
+
+  // Pino Logger 사용
+  app.useLogger(app.get(Logger));
 
   // Cookie Parser
-  app.use(cookieParser());
+  await app.register(fastifyCookie);
 
   // CORS 설정
   app.enableCors({
@@ -25,11 +38,10 @@ async function bootstrap() {
     }),
   );
 
-  // 전역 Exception Filter
-  app.useGlobalFilters(new GlobalExceptionFilter());
-
   const port = process.env.PORT || 5001;
-  await app.listen(port);
-  console.log(`Application is running on: http://localhost:${port}`);
+  await app.listen(port, '0.0.0.0');
+
+  const logger = app.get(Logger);
+  logger.log(`Application is running on: http://localhost:${port}`);
 }
 void bootstrap();
