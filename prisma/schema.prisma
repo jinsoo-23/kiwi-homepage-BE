@@ -19,21 +19,45 @@ model User {
   @@map("users")
 }
 
+model Customer {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  inquiries      Inquiry[]
+  consentHistory ConsentHistory[]
+
+  @@map("customers")
+}
+
 model Inquiry {
-  id               String    @id @default(uuid())
-  name             String
-  companyName      String    @map("company_name")
-  email            String
-  phone            String
-  inquiryType      String    @map("inquiry_type")
-  message          String
-  status           String    @default("PENDING")
-  marketingConsent Boolean   @map("marketing_consent")
-  privacyConsent   Boolean   @map("privacy_consent")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  deletedAt        DateTime? @map("deleted_at")
+  id          String    @id @default(uuid())
+  customerId  String    @map("customer_id")
+  name        String
+  companyName String    @map("company_name")
+  phone       String
+  inquiryType String    @map("inquiry_type")
+  message     String
+  status      String    @default("PENDING")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
 
   @@map("inquiries")
+}
+
+model ConsentHistory {
+  id          String   @id @default(uuid())
+  customerId  String   @map("customer_id")
+  consentType String   @map("consent_type")
+  consented   Boolean
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@map("consent_histories")
 }
 
 model PrivacyPolicy {

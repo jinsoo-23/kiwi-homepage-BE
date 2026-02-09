@@ -47,4 +47,6 @@ export class CreateInquiryDto {
 export class CreateInquiryResponseDto {
   id: string;
   createdAt: Date;
+  hasPreviousInquiry: boolean;
+  message?: string;
 }

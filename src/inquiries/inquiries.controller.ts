@@ -4,6 +4,7 @@ import {
   Patch,
   Get,
   Body,
+  Query,
   Res,
   HttpCode,
   HttpStatus,
@@ -15,15 +16,17 @@ import {
   CreateInquiryResponseDto,
 } from './dto/create-inquiry.dto';
 import {
-  UpdateMarketingConsentDto,
-  UpdateMarketingConsentResponseDto,
+  GetConsentsQueryDto,
+  GetConsentsResponseDto,
+  UpdateConsentDto,
+  UpdateConsentResponseDto,
 } from './dto/update-marketing-consent.dto';
 
-@Controller('api/v1/inquiries')
+@Controller('api/v1')
 export class InquiriesController {
   constructor(private readonly inquiriesService: InquiriesService) {}
 
-  @Post()
+  @Post('inquiries')
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body() createInquiryDto: CreateInquiryDto,
@@ -31,17 +34,23 @@ export class InquiriesController {
     return this.inquiriesService.create(createInquiryDto);
   }
 
-  @Patch('marketing-consent')
+  @Get('consents')
   @HttpCode(HttpStatus.OK)
-  async updateMarketingConsent(
-    @Body() updateMarketingConsentDto: UpdateMarketingConsentDto,
-  ): Promise<UpdateMarketingConsentResponseDto> {
-    return this.inquiriesService.updateMarketingConsent(
-      updateMarketingConsentDto,
-    );
+  async getConsents(
+    @Query() query: GetConsentsQueryDto,
+  ): Promise<GetConsentsResponseDto> {
+    return this.inquiriesService.getConsents(query);
   }
 
-  @Get('export')
+  @Patch('consents')
+  @HttpCode(HttpStatus.OK)
+  async updateConsent(
+    @Body() updateConsentDto: UpdateConsentDto,
+  ): Promise<UpdateConsentResponseDto> {
+    return this.inquiriesService.updateConsent(updateConsentDto);
+  }
+
+  @Get('inquiries/export')
   async exportToExcel(@Res() res: Response): Promise<void> {
     const buffer = await this.inquiriesService.exportToExcel();
 
