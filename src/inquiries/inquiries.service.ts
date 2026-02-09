@@ -76,16 +76,16 @@ export class InquiriesService {
     });
 
     // Teams 알림 전송 (실패해도 문의 저장은 성공)
-    // TODO: 테스트 완료 후 주석 해제
-    // await this.teamsService.sendInquiryNotification({
-    //   name: inquiry.name,
-    //   companyName: inquiry.companyName,
-    //   email: customer.email,
-    //   phone: inquiry.phone,
-    //   inquiryType: inquiry.inquiryType,
-    //   message: inquiry.message,
-    //   createdAt: inquiry.createdAt,
-    // });
+    // Teams 알림 전송 (실패해도 문의 저장은 성공)
+    await this.teamsService.sendInquiryNotification({
+      name: inquiry.name,
+      companyName: inquiry.companyName,
+      email: customer.email,
+      phone: inquiry.phone,
+      inquiryType: inquiry.inquiryType,
+      message: inquiry.message,
+      createdAt: inquiry.createdAt,
+    });
 
     const response: CreateInquiryResponseDto = {
       id: inquiry.id,
