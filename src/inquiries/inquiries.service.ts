@@ -76,15 +76,16 @@ export class InquiriesService {
     });
 
     // Teams 알림 전송 (실패해도 문의 저장은 성공)
-    await this.teamsService.sendInquiryNotification({
-      name: inquiry.name,
-      companyName: inquiry.companyName,
-      email: customer.email,
-      phone: inquiry.phone,
-      inquiryType: inquiry.inquiryType,
-      message: inquiry.message,
-      createdAt: inquiry.createdAt,
-    });
+    // TODO: 테스트 완료 후 주석 해제
+    // await this.teamsService.sendInquiryNotification({
+    //   name: inquiry.name,
+    //   companyName: inquiry.companyName,
+    //   email: customer.email,
+    //   phone: inquiry.phone,
+    //   inquiryType: inquiry.inquiryType,
+    //   message: inquiry.message,
+    //   createdAt: inquiry.createdAt,
+    // });
 
     const response: CreateInquiryResponseDto = {
       id: inquiry.id,
@@ -99,19 +100,30 @@ export class InquiriesService {
     return response;
   }
 
+  // 전화번호 정규화 (숫자만 추출 후 뒤 10자리)
+  private normalizePhone(phone: string): string {
+    const digits = phone.replace(/\D/g, '');
+    return digits.slice(-10);
+  }
+
   async getConsents(query: GetConsentsQueryDto): Promise<GetConsentsResponseDto> {
     // email로 Customer 조회
     const customer = await this.prisma.customer.findUnique({
       where: { email: query.email },
       include: {
         inquiries: {
-          where: { phone: query.phone, deletedAt: null },
-          take: 1,
+          where: { deletedAt: null },
         },
       },
     });
 
-    if (!customer || customer.inquiries.length === 0) {
+    // 전화번호 정규화 후 비교
+    const normalizedInputPhone = this.normalizePhone(query.phone);
+    const matchingInquiry = customer?.inquiries.find(
+      (i) => this.normalizePhone(i.phone) === normalizedInputPhone,
+    );
+
+    if (!customer || !matchingInquiry) {
       throw new HttpException(
         {
           errorCode: ErrorCode.CUSTOMER_NOT_FOUND,
@@ -150,13 +162,18 @@ export class InquiriesService {
       where: { email: dto.email },
       include: {
         inquiries: {
-          where: { phone: dto.phone, deletedAt: null },
-          take: 1,
+          where: { deletedAt: null },
         },
       },
     });
 
-    if (!customer || customer.inquiries.length === 0) {
+    // 전화번호 정규화 후 비교
+    const normalizedInputPhone = this.normalizePhone(dto.phone);
+    const matchingInquiry = customer?.inquiries.find(
+      (i) => this.normalizePhone(i.phone) === normalizedInputPhone,
+    );
+
+    if (!customer || !matchingInquiry) {
       throw new HttpException(
         {
           errorCode: ErrorCode.CUSTOMER_NOT_FOUND,
