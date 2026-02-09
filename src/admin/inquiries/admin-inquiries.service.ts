@@ -3,6 +3,23 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { QueryInquiriesDto } from './dto/query-inquiries.dto';
 import * as ExcelJS from 'exceljs';
 
+export interface CustomerGroup {
+  customerId: string;
+  email: string;
+  marketingConsent: boolean;
+  marketingConsentUpdatedAt: Date;
+  inquiryCount: number;
+  inquiries: {
+    id: string;
+    name: string;
+    companyName: string;
+    phone: string;
+    inquiryType: string;
+    status: string;
+    createdAt: Date;
+  }[];
+}
+
 @Injectable()
 export class AdminInquiriesService {
   constructor(private readonly prisma: PrismaService) {}
@@ -16,52 +33,94 @@ export class AdminInquiriesService {
       inquiryType,
       marketingConsent,
     } = query;
-    const skip = (page - 1) * limit;
 
-    const where: Record<string, unknown> = {
+    // 기본 where 조건
+    const inquiryWhere: Record<string, unknown> = {
       deletedAt: null,
     };
 
     if (status) {
-      where.status = status;
+      inquiryWhere.status = status;
     }
 
     if (inquiryType) {
-      where.inquiryType = inquiryType;
+      inquiryWhere.inquiryType = inquiryType;
     }
 
-    if (marketingConsent !== undefined) {
-      where.marketingConsent = marketingConsent;
-    }
-
+    // 검색 조건
+    const customerWhere: Record<string, unknown> = {};
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
+      customerWhere.OR = [
         { email: { contains: search, mode: 'insensitive' } },
-        { companyName: { contains: search, mode: 'insensitive' } },
+        {
+          inquiries: {
+            some: {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { companyName: { contains: search, mode: 'insensitive' } },
+              ],
+              deletedAt: null,
+            },
+          },
+        },
       ];
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.inquiry.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          name: true,
-          companyName: true,
-          email: true,
-          phone: true,
-          inquiryType: true,
-          status: true,
-          marketingConsent: true,
-          createdAt: true,
+    // Customer 기준으로 조회
+    const customers = await this.prisma.customer.findMany({
+      where: {
+        ...customerWhere,
+        inquiries: {
+          some: inquiryWhere,
         },
-      }),
-      this.prisma.inquiry.count({ where }),
-    ]);
+      },
+      include: {
+        inquiries: {
+          where: inquiryWhere,
+          orderBy: { createdAt: 'desc' },
+          select: {
+            id: true,
+            name: true,
+            companyName: true,
+            phone: true,
+            inquiryType: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        consentHistory: {
+          where: { consentType: 'MARKETING' },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // marketingConsent 필터 적용
+    let filteredCustomers = customers;
+    if (marketingConsent !== undefined) {
+      filteredCustomers = customers.filter((c) => {
+        const consent = c.consentHistory[0]?.consented ?? false;
+        return consent === marketingConsent;
+      });
+    }
+
+    // 페이지네이션
+    const total = filteredCustomers.length;
+    const skip = (page - 1) * limit;
+    const paginatedCustomers = filteredCustomers.slice(skip, skip + limit);
+
+    // 응답 데이터 구성
+    const data: CustomerGroup[] = paginatedCustomers.map((customer) => ({
+      customerId: customer.id,
+      email: customer.email,
+      marketingConsent: customer.consentHistory[0]?.consented ?? false,
+      marketingConsentUpdatedAt:
+        customer.consentHistory[0]?.createdAt ?? customer.createdAt,
+      inquiryCount: customer.inquiries.length,
+      inquiries: customer.inquiries,
+    }));
 
     return {
       data,
@@ -77,6 +136,15 @@ export class AdminInquiriesService {
   async findOne(id: string) {
     const inquiry = await this.prisma.inquiry.findFirst({
       where: { id, deletedAt: null },
+      include: {
+        customer: {
+          include: {
+            consentHistory: {
+              orderBy: { createdAt: 'desc' },
+            },
+          },
+        },
+      },
     });
 
     if (!inquiry) {
@@ -86,7 +154,72 @@ export class AdminInquiriesService {
       });
     }
 
-    return inquiry;
+    // 최신 동의 상태 추출
+    const marketingConsent = inquiry.customer.consentHistory.find(
+      (c) => c.consentType === 'MARKETING',
+    );
+    const privacyConsent = inquiry.customer.consentHistory.find(
+      (c) => c.consentType === 'PRIVACY',
+    );
+
+    return {
+      id: inquiry.id,
+      name: inquiry.name,
+      companyName: inquiry.companyName,
+      email: inquiry.customer.email,
+      phone: inquiry.phone,
+      inquiryType: inquiry.inquiryType,
+      message: inquiry.message,
+      status: inquiry.status,
+      marketingConsent: marketingConsent?.consented ?? false,
+      privacyConsent: privacyConsent?.consented ?? false,
+      createdAt: inquiry.createdAt,
+    };
+  }
+
+  async getCustomerHistory(customerId: string) {
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId },
+      include: {
+        inquiries: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'desc' },
+        },
+        consentHistory: {
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException({
+        errorCode: 'CUSTOMER_NOT_FOUND',
+        message: '고객을 찾을 수 없습니다',
+      });
+    }
+
+    return {
+      customer: {
+        id: customer.id,
+        email: customer.email,
+        createdAt: customer.createdAt,
+      },
+      inquiries: customer.inquiries.map((inq) => ({
+        id: inq.id,
+        name: inq.name,
+        companyName: inq.companyName,
+        phone: inq.phone,
+        inquiryType: inq.inquiryType,
+        message: inq.message,
+        status: inq.status,
+        createdAt: inq.createdAt,
+      })),
+      consentHistory: customer.consentHistory.map((c) => ({
+        consentType: c.consentType,
+        consented: c.consented,
+        createdAt: c.createdAt,
+      })),
+    };
   }
 
   async updateStatus(id: string, status: 'PENDING' | 'COMPLETED') {
@@ -132,6 +265,7 @@ export class AdminInquiriesService {
   async exportToExcel(): Promise<ExcelJS.Buffer> {
     const inquiries = await this.prisma.inquiry.findMany({
       where: { deletedAt: null },
+      include: { customer: true },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -151,14 +285,29 @@ export class AdminInquiriesService {
       { header: '생성일', key: 'createdAt', width: 20 },
     ];
 
-    inquiries.forEach((inquiry) => {
+    for (const inquiry of inquiries) {
+      const marketingConsent = await this.prisma.consentHistory.findFirst({
+        where: { customerId: inquiry.customerId, consentType: 'MARKETING' },
+        orderBy: { createdAt: 'desc' },
+      });
+      const privacyConsent = await this.prisma.consentHistory.findFirst({
+        where: { customerId: inquiry.customerId, consentType: 'PRIVACY' },
+        orderBy: { createdAt: 'desc' },
+      });
+
       worksheet.addRow({
-        ...inquiry,
-        marketingConsent: inquiry.marketingConsent ? 'O' : 'X',
-        privacyConsent: inquiry.privacyConsent ? 'O' : 'X',
+        name: inquiry.name,
+        companyName: inquiry.companyName,
+        email: inquiry.customer.email,
+        phone: inquiry.phone,
+        inquiryType: inquiry.inquiryType,
+        message: inquiry.message,
+        status: inquiry.status,
+        marketingConsent: marketingConsent?.consented ? 'O' : 'X',
+        privacyConsent: privacyConsent?.consented ? 'O' : 'X',
         createdAt: inquiry.createdAt.toISOString(),
       });
-    });
+    }
 
     return workbook.xlsx.writeBuffer();
   }
