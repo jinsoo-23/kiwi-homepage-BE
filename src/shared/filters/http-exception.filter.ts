@@ -39,15 +39,12 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     } catch (filterError) {
       // 필터 내부 에러 발생 시 기본 응답
       console.error('ProblemDetailsFilter error:', filterError);
-      response
-        .code(500)
-        .header('Content-Type', 'application/json')
-        .send({
-          type: '/errors/internal',
-          title: 'Internal Server Error',
-          status: 500,
-          detail: 'An error occurred while processing the error response',
-        });
+      response.code(500).header('Content-Type', 'application/json').send({
+        type: '/errors/internal',
+        title: 'Internal Server Error',
+        status: 500,
+        detail: 'An error occurred while processing the error response',
+      });
     }
   }
 
@@ -64,7 +61,8 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
       // class-validator 검증 에러 처리
       if (exception instanceof BadRequestException) {
-        const validationErrors = this.extractValidationErrors(exceptionResponse);
+        const validationErrors =
+          this.extractValidationErrors(exceptionResponse);
         if (validationErrors.length > 0) {
           return {
             type: ERROR_MESSAGES[ErrorCode.VALIDATION_ERROR].type,
@@ -80,7 +78,9 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
       // 커스텀 에러 응답 처리
       const customError = this.extractCustomError(exceptionResponse);
-      const errorCode = customError.errorCode || this.getErrorCodeByStatus(status);
+      const errorCode =
+        customError.errorCode ||
+        this.getErrorCodeByStatus(status as HttpStatus);
       const errorInfo = ERROR_MESSAGES[errorCode as ErrorCode] || {
         type: '/errors/unknown',
         title: 'Unknown Error',
@@ -153,21 +153,23 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     return {};
   }
 
-  private getErrorCodeByStatus(status: number): ErrorCode {
-    switch (status) {
-      case HttpStatus.BAD_REQUEST:
-        return ErrorCode.INVALID_REQUEST;
-      case HttpStatus.UNAUTHORIZED:
-        return ErrorCode.UNAUTHORIZED;
-      case HttpStatus.FORBIDDEN:
-        return ErrorCode.FORBIDDEN;
-      case HttpStatus.NOT_FOUND:
-        return ErrorCode.NOT_FOUND;
-      case HttpStatus.TOO_MANY_REQUESTS:
-        return ErrorCode.RATE_LIMITED;
-      default:
-        return ErrorCode.INTERNAL_ERROR;
+  private getErrorCodeByStatus(status: HttpStatus): ErrorCode {
+    if (status === HttpStatus.BAD_REQUEST) {
+      return ErrorCode.INVALID_REQUEST;
     }
+    if (status === HttpStatus.UNAUTHORIZED) {
+      return ErrorCode.UNAUTHORIZED;
+    }
+    if (status === HttpStatus.FORBIDDEN) {
+      return ErrorCode.FORBIDDEN;
+    }
+    if (status === HttpStatus.NOT_FOUND) {
+      return ErrorCode.NOT_FOUND;
+    }
+    if (status === HttpStatus.TOO_MANY_REQUESTS) {
+      return ErrorCode.RATE_LIMITED;
+    }
+    return ErrorCode.INTERNAL_ERROR;
   }
 
   private logError(exception: unknown, problemDetails: ProblemDetails): void {

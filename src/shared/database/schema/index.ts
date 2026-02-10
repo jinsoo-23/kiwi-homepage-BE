@@ -16,16 +16,24 @@ export const users = pgTable('users', {
   password: varchar('password', { length: 255 }).notNull(),
   name: varchar('name', { length: 100 }).notNull(),
   refreshToken: text('refresh_token'),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
 });
 
 // Customers 테이블
 export const customers = pgTable('customers', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: varchar('email', { length: 255 }).notNull().unique(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
 });
 
 // Inquiries 테이블
@@ -45,7 +53,9 @@ export const inquiries = pgTable('inquiries', {
   retryCount: smallint('retry_count').default(0),
   lastError: text('last_error'),
   sentAt: timestamp('sent_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 });
 
@@ -57,7 +67,9 @@ export const consentHistories = pgTable('consent_histories', {
     .references(() => customers.id),
   consentType: varchar('consent_type', { length: 50 }).notNull(),
   consented: boolean('consented').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
 });
 
 // PrivacyPolicies 테이블
@@ -65,7 +77,9 @@ export const privacyPolicies = pgTable('privacy_policies', {
   id: uuid('id').defaultRandom().primaryKey(),
   content: text('content').notNull(),
   version: varchar('version', { length: 20 }).notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .defaultNow()
+    .notNull(),
 });
 
 // Relations 정의
@@ -81,12 +95,15 @@ export const inquiriesRelations = relations(inquiries, ({ one }) => ({
   }),
 }));
 
-export const consentHistoriesRelations = relations(consentHistories, ({ one }) => ({
-  customer: one(customers, {
-    fields: [consentHistories.customerId],
-    references: [customers.id],
+export const consentHistoriesRelations = relations(
+  consentHistories,
+  ({ one }) => ({
+    customer: one(customers, {
+      fields: [consentHistories.customerId],
+      references: [customers.id],
+    }),
   }),
-}));
+);
 
 // 타입 추론
 export type User = typeof users.$inferSelect;

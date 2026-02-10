@@ -6,6 +6,7 @@ import {
 import { ValidationPipe } from '@nestjs/common';
 import { Logger } from 'nestjs-pino';
 import fastifyCookie from '@fastify/cookie';
+import helmet from '@fastify/helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -19,6 +20,19 @@ async function bootstrap() {
 
   // Pino Logger 사용
   app.useLogger(app.get(Logger));
+
+  // 보안 헤더 (Helmet)
+  await app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+  });
 
   // Cookie Parser
   await app.register(fastifyCookie);

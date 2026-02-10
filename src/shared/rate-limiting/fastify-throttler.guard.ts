@@ -22,6 +22,7 @@ export class FastifyThrottlerGuard extends ThrottlerGuard {
   /**
    * 클라이언트 IP 추출 (프록시 환경 지원)
    */
+  // eslint-disable-next-line @typescript-eslint/require-await
   protected async getTracker(req: FastifyRequest): Promise<string> {
     // X-Forwarded-For 헤더 우선 사용 (프록시/로드밸런서 환경)
     const forwarded = req.headers['x-forwarded-for'];
@@ -43,7 +44,10 @@ export class FastifyThrottlerGuard extends ThrottlerGuard {
   /**
    * Rate Limit 초과 시 RFC 9457 형식 에러
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   protected throwThrottlingException(context: ExecutionContext): Promise<void> {
-    throw new ThrottlerException('요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
+    throw new ThrottlerException(
+      '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.',
+    );
   }
 }

@@ -1,16 +1,20 @@
-import { Controller, Get } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Controller, Get, Inject } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
+import { sql } from 'drizzle-orm';
+import { DRIZZLE_TOKEN } from '../../shared/database/drizzle.provider';
+import type { DrizzleDB } from '../../shared/database/drizzle.provider';
 
 @Controller('api/v1/health')
 export class HealthController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB) {}
 
   @Get()
+  @SkipThrottle()
   async check() {
     let dbHealthy = false;
 
     try {
-      await this.prisma.$queryRaw`SELECT 1`;
+      await this.db.execute(sql`SELECT 1`);
       dbHealthy = true;
     } catch {
       dbHealthy = false;

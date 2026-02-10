@@ -1,8 +1,17 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../../prisma/prisma.service';
+import { ConfigService } from '@nestjs/config';
+import { eq } from 'drizzle-orm';
+import { DRIZZLE_TOKEN } from '../../shared/database/drizzle.provider';
+import type { DrizzleDB } from '../../shared/database/drizzle.provider';
+import { users } from '../../shared/database/schema';
 import { LoginDto } from './dto/login.dto';
+import { verifyPassword } from '../../shared/crypto';
 
 interface JwtPayload {
   sub: string;
@@ -11,17 +20,26 @@ interface JwtPayload {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+  private readonly jwtRefreshSecret: string;
+
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB,
     private readonly jwtService: JwtService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.jwtRefreshSecret =
+      this.configService.getOrThrow<string>('JWT_REFRESH_SECRET');
+  }
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const [user] = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
 
     if (!user) {
       throw new UnauthorizedException({
@@ -30,7 +48,7 @@ export class AuthService {
       });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await verifyPassword(password, user.password);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException({
@@ -41,10 +59,10 @@ export class AuthService {
 
     const tokens = this.generateTokens(user.id, user.email);
 
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: tokens.refreshToken },
-    });
+    await this.db
+      .update(users)
+      .set({ refreshToken: tokens.refreshToken })
+      .where(eq(users.id, user.id));
 
     return {
       ...tokens,
@@ -59,12 +77,14 @@ export class AuthService {
   async refresh(refreshToken: string) {
     try {
       const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || 'default-refresh-secret',
+        secret: this.jwtRefreshSecret,
       });
 
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-      });
+      const [user] = await this.db
+        .select()
+        .from(users)
+        .where(eq(users.id, payload.sub))
+        .limit(1);
 
       if (!user || user.refreshToken !== refreshToken) {
         throw new UnauthorizedException({
@@ -88,10 +108,10 @@ export class AuthService {
   }
 
   async logout(userId: string) {
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { refreshToken: null },
-    });
+    await this.db
+      .update(users)
+      .set({ refreshToken: null })
+      .where(eq(users.id, userId));
 
     return { success: true };
   }
@@ -104,7 +124,7 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(payload, {
-      secret: process.env.JWT_REFRESH_SECRET || 'default-refresh-secret',
+      secret: this.jwtRefreshSecret,
       expiresIn: '7d',
     });
 
