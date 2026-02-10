@@ -1,4 +1,4 @@
-import { Injectable, Inject, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, Inject, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { eq, desc, isNull, and } from 'drizzle-orm';
 import { DRIZZLE_TOKEN } from '../shared/database/drizzle.provider';
 import type { DrizzleDB } from '../shared/database/drizzle.provider';
@@ -8,6 +8,13 @@ import {
   consentHistories,
 } from '../shared/database/schema';
 import { TeamsService } from '../teams/teams.service';
+
+// Teams 상태 상수
+export const TeamsStatus = {
+  PENDING: 'PENDING',
+  SENT: 'SENT',
+  FAILED: 'FAILED',
+} as const;
 import {
   CreateInquiryDto,
   CreateInquiryResponseDto,
@@ -23,6 +30,8 @@ import { generateIdempotencyKey } from '../shared/idempotency';
 
 @Injectable()
 export class InquiriesService {
+  private readonly logger = new Logger(InquiriesService.name);
+
   constructor(
     @Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB,
     private readonly teamsService: TeamsService,
@@ -111,8 +120,9 @@ export class InquiriesService {
       },
     ]);
 
-    // Teams 알림 전송 (실패해도 문의 저장은 성공)
-    await this.teamsService.sendInquiryNotification({
+    // Teams 알림 전송 및 상태 업데이트
+    const teamsResult = await this.teamsService.sendInquiryNotification({
+      id: inquiry.id,
       name: inquiry.name,
       companyName: inquiry.companyName,
       email: customer.email,
@@ -121,6 +131,30 @@ export class InquiriesService {
       message: inquiry.message,
       createdAt: inquiry.createdAt,
     });
+
+    // Teams 알림 결과에 따라 DB 업데이트
+    if (teamsResult.success) {
+      await this.db
+        .update(inquiries)
+        .set({
+          teamsStatus: TeamsStatus.SENT,
+          sentAt: teamsResult.sentAt,
+        })
+        .where(eq(inquiries.id, inquiry.id));
+    } else {
+      await this.db
+        .update(inquiries)
+        .set({
+          teamsStatus: TeamsStatus.FAILED,
+          lastError: teamsResult.error,
+          retryCount: 0,
+        })
+        .where(eq(inquiries.id, inquiry.id));
+
+      this.logger.warn(
+        `Teams notification failed for inquiry ${inquiry.id}: ${teamsResult.error}`,
+      );
+    }
 
     const response: CreateInquiryResponseDto = {
       id: inquiry.id,
