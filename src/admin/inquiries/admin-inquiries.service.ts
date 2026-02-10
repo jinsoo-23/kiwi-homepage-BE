@@ -1,5 +1,12 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { eq, desc, isNull, and, or, ilike } from 'drizzle-orm';
+import { DRIZZLE_TOKEN } from '../../shared/database/drizzle.provider';
+import type { DrizzleDB } from '../../shared/database/drizzle.provider';
+import {
+  customers,
+  inquiries,
+  consentHistories,
+} from '../../shared/database/schema';
 import { QueryInquiriesDto } from './dto/query-inquiries.dto';
 import * as ExcelJS from 'exceljs';
 
@@ -22,7 +29,7 @@ export interface CustomerGroup {
 
 @Injectable()
 export class AdminInquiriesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB) {}
 
   async findAll(query: QueryInquiriesDto) {
     const {
@@ -34,96 +41,99 @@ export class AdminInquiriesService {
       marketingConsent,
     } = query;
 
-    // 기본 where 조건
-    const inquiryWhere: Record<string, unknown> = {
-      deletedAt: null,
-    };
+    // 모든 고객 조회
+    const allCustomers = await this.db.select().from(customers);
 
-    if (status) {
-      inquiryWhere.status = status;
-    }
+    // 각 고객에 대해 문의와 동의 상태 조회
+    const customerGroups: CustomerGroup[] = [];
 
-    if (inquiryType) {
-      inquiryWhere.inquiryType = inquiryType;
-    }
-
-    // 검색 조건
-    const customerWhere: Record<string, unknown> = {};
-    if (search) {
-      customerWhere.OR = [
-        { email: { contains: search, mode: 'insensitive' } },
-        {
-          inquiries: {
-            some: {
-              OR: [
-                { name: { contains: search, mode: 'insensitive' } },
-                { companyName: { contains: search, mode: 'insensitive' } },
-              ],
-              deletedAt: null,
-            },
-          },
-        },
+    for (const customer of allCustomers) {
+      // 문의 조건 생성
+      const conditions = [
+        eq(inquiries.customerId, customer.id),
+        isNull(inquiries.deletedAt),
       ];
-    }
+      if (status) {
+        conditions.push(eq(inquiries.status, status));
+      }
+      if (inquiryType) {
+        conditions.push(eq(inquiries.inquiryType, inquiryType));
+      }
 
-    // Customer 기준으로 조회
-    const customers = await this.prisma.customer.findMany({
-      where: {
-        ...customerWhere,
-        inquiries: {
-          some: inquiryWhere,
-        },
-      },
-      include: {
-        inquiries: {
-          where: inquiryWhere,
-          orderBy: { createdAt: 'desc' },
-          select: {
-            id: true,
-            name: true,
-            companyName: true,
-            phone: true,
-            inquiryType: true,
-            status: true,
-            createdAt: true,
-          },
-        },
-        consentHistory: {
-          where: { consentType: 'MARKETING' },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
+      // 고객의 문의 조회
+      const customerInquiries = await this.db
+        .select({
+          id: inquiries.id,
+          name: inquiries.name,
+          companyName: inquiries.companyName,
+          phone: inquiries.phone,
+          inquiryType: inquiries.inquiryType,
+          status: inquiries.status,
+          createdAt: inquiries.createdAt,
+        })
+        .from(inquiries)
+        .where(and(...conditions))
+        .orderBy(desc(inquiries.createdAt));
 
-    // marketingConsent 필터 적용
-    let filteredCustomers = customers;
-    if (marketingConsent !== undefined) {
-      filteredCustomers = customers.filter((c) => {
-        const consent = c.consentHistory[0]?.consented ?? false;
-        return consent === marketingConsent;
+      // 문의가 없으면 건너뜀
+      if (customerInquiries.length === 0) continue;
+
+      // 검색 필터 적용
+      if (search) {
+        const searchLower = search.toLowerCase();
+        const emailMatch = customer.email.toLowerCase().includes(searchLower);
+        const inquiryMatch = customerInquiries.some(
+          (inq) =>
+            inq.name.toLowerCase().includes(searchLower) ||
+            inq.companyName.toLowerCase().includes(searchLower),
+        );
+        if (!emailMatch && !inquiryMatch) continue;
+      }
+
+      // 최신 마케팅 동의 상태 조회
+      const [latestConsent] = await this.db
+        .select()
+        .from(consentHistories)
+        .where(
+          and(
+            eq(consentHistories.customerId, customer.id),
+            eq(consentHistories.consentType, 'MARKETING'),
+          ),
+        )
+        .orderBy(desc(consentHistories.createdAt))
+        .limit(1);
+
+      const hasMarketingConsent = latestConsent?.consented ?? false;
+
+      // marketingConsent 필터 적용
+      if (marketingConsent !== undefined && hasMarketingConsent !== marketingConsent) {
+        continue;
+      }
+
+      customerGroups.push({
+        customerId: customer.id,
+        email: customer.email,
+        marketingConsent: hasMarketingConsent,
+        marketingConsentUpdatedAt: latestConsent?.createdAt ?? customer.createdAt,
+        inquiryCount: customerInquiries.length,
+        inquiries: customerInquiries,
       });
     }
 
-    // 페이지네이션
-    const total = filteredCustomers.length;
-    const skip = (page - 1) * limit;
-    const paginatedCustomers = filteredCustomers.slice(skip, skip + limit);
+    // updatedAt 기준 정렬 (최신순)
+    customerGroups.sort((a, b) => {
+      const aDate = a.inquiries[0]?.createdAt ?? new Date(0);
+      const bDate = b.inquiries[0]?.createdAt ?? new Date(0);
+      return bDate.getTime() - aDate.getTime();
+    });
 
-    // 응답 데이터 구성
-    const data: CustomerGroup[] = paginatedCustomers.map((customer) => ({
-      customerId: customer.id,
-      email: customer.email,
-      marketingConsent: customer.consentHistory[0]?.consented ?? false,
-      marketingConsentUpdatedAt:
-        customer.consentHistory[0]?.createdAt ?? customer.createdAt,
-      inquiryCount: customer.inquiries.length,
-      inquiries: customer.inquiries,
-    }));
+    // 페이지네이션
+    const total = customerGroups.length;
+    const skip = (page - 1) * limit;
+    const paginatedData = customerGroups.slice(skip, skip + limit);
 
     return {
-      data,
+      data: paginatedData,
       pagination: {
         page,
         limit,
@@ -134,18 +144,11 @@ export class AdminInquiriesService {
   }
 
   async findOne(id: string) {
-    const inquiry = await this.prisma.inquiry.findFirst({
-      where: { id, deletedAt: null },
-      include: {
-        customer: {
-          include: {
-            consentHistory: {
-              orderBy: { createdAt: 'desc' },
-            },
-          },
-        },
-      },
-    });
+    const [inquiry] = await this.db
+      .select()
+      .from(inquiries)
+      .where(and(eq(inquiries.id, id), isNull(inquiries.deletedAt)))
+      .limit(1);
 
     if (!inquiry) {
       throw new NotFoundException({
@@ -154,19 +157,43 @@ export class AdminInquiriesService {
       });
     }
 
-    // 최신 동의 상태 추출
-    const marketingConsent = inquiry.customer.consentHistory.find(
-      (c) => c.consentType === 'MARKETING',
-    );
-    const privacyConsent = inquiry.customer.consentHistory.find(
-      (c) => c.consentType === 'PRIVACY',
-    );
+    // 고객 조회
+    const [customer] = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, inquiry.customerId))
+      .limit(1);
+
+    // 최신 동의 상태 조회
+    const [marketingConsent] = await this.db
+      .select()
+      .from(consentHistories)
+      .where(
+        and(
+          eq(consentHistories.customerId, inquiry.customerId),
+          eq(consentHistories.consentType, 'MARKETING'),
+        ),
+      )
+      .orderBy(desc(consentHistories.createdAt))
+      .limit(1);
+
+    const [privacyConsent] = await this.db
+      .select()
+      .from(consentHistories)
+      .where(
+        and(
+          eq(consentHistories.customerId, inquiry.customerId),
+          eq(consentHistories.consentType, 'PRIVACY'),
+        ),
+      )
+      .orderBy(desc(consentHistories.createdAt))
+      .limit(1);
 
     return {
       id: inquiry.id,
       name: inquiry.name,
       companyName: inquiry.companyName,
-      email: inquiry.customer.email,
+      email: customer.email,
       phone: inquiry.phone,
       inquiryType: inquiry.inquiryType,
       message: inquiry.message,
@@ -178,18 +205,11 @@ export class AdminInquiriesService {
   }
 
   async getCustomerHistory(customerId: string) {
-    const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId },
-      include: {
-        inquiries: {
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        },
-        consentHistory: {
-          orderBy: { createdAt: 'desc' },
-        },
-      },
-    });
+    const [customer] = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, customerId))
+      .limit(1);
 
     if (!customer) {
       throw new NotFoundException({
@@ -198,13 +218,29 @@ export class AdminInquiriesService {
       });
     }
 
+    // 고객의 문의 조회
+    const customerInquiries = await this.db
+      .select()
+      .from(inquiries)
+      .where(
+        and(eq(inquiries.customerId, customerId), isNull(inquiries.deletedAt)),
+      )
+      .orderBy(desc(inquiries.createdAt));
+
+    // 고객의 동의 이력 조회
+    const customerConsentHistory = await this.db
+      .select()
+      .from(consentHistories)
+      .where(eq(consentHistories.customerId, customerId))
+      .orderBy(desc(consentHistories.createdAt));
+
     return {
       customer: {
         id: customer.id,
         email: customer.email,
         createdAt: customer.createdAt,
       },
-      inquiries: customer.inquiries.map((inq) => ({
+      inquiries: customerInquiries.map((inq) => ({
         id: inq.id,
         name: inq.name,
         companyName: inq.companyName,
@@ -214,7 +250,7 @@ export class AdminInquiriesService {
         status: inq.status,
         createdAt: inq.createdAt,
       })),
-      consentHistory: customer.consentHistory.map((c) => ({
+      consentHistory: customerConsentHistory.map((c) => ({
         consentType: c.consentType,
         consented: c.consented,
         createdAt: c.createdAt,
@@ -223,9 +259,11 @@ export class AdminInquiriesService {
   }
 
   async updateStatus(id: string, status: 'PENDING' | 'COMPLETED') {
-    const inquiry = await this.prisma.inquiry.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const [inquiry] = await this.db
+      .select()
+      .from(inquiries)
+      .where(and(eq(inquiries.id, id), isNull(inquiries.deletedAt)))
+      .limit(1);
 
     if (!inquiry) {
       throw new NotFoundException({
@@ -234,18 +272,20 @@ export class AdminInquiriesService {
       });
     }
 
-    await this.prisma.inquiry.update({
-      where: { id },
-      data: { status },
-    });
+    await this.db
+      .update(inquiries)
+      .set({ status })
+      .where(eq(inquiries.id, id));
 
     return { id, status };
   }
 
   async softDelete(id: string) {
-    const inquiry = await this.prisma.inquiry.findFirst({
-      where: { id, deletedAt: null },
-    });
+    const [inquiry] = await this.db
+      .select()
+      .from(inquiries)
+      .where(and(eq(inquiries.id, id), isNull(inquiries.deletedAt)))
+      .limit(1);
 
     if (!inquiry) {
       throw new NotFoundException({
@@ -254,20 +294,33 @@ export class AdminInquiriesService {
       });
     }
 
-    await this.prisma.inquiry.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
+    await this.db
+      .update(inquiries)
+      .set({ deletedAt: new Date() })
+      .where(eq(inquiries.id, id));
 
     return { success: true };
   }
 
   async exportToExcel(): Promise<ExcelJS.Buffer> {
-    const inquiries = await this.prisma.inquiry.findMany({
-      where: { deletedAt: null },
-      include: { customer: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    // 모든 문의 조회 (고객 정보 포함)
+    const allInquiries = await this.db
+      .select({
+        id: inquiries.id,
+        customerId: inquiries.customerId,
+        name: inquiries.name,
+        companyName: inquiries.companyName,
+        phone: inquiries.phone,
+        inquiryType: inquiries.inquiryType,
+        message: inquiries.message,
+        status: inquiries.status,
+        createdAt: inquiries.createdAt,
+        customerEmail: customers.email,
+      })
+      .from(inquiries)
+      .innerJoin(customers, eq(inquiries.customerId, customers.id))
+      .where(isNull(inquiries.deletedAt))
+      .orderBy(desc(inquiries.createdAt));
 
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('문의 목록');
@@ -285,20 +338,35 @@ export class AdminInquiriesService {
       { header: '생성일', key: 'createdAt', width: 20 },
     ];
 
-    for (const inquiry of inquiries) {
-      const marketingConsent = await this.prisma.consentHistory.findFirst({
-        where: { customerId: inquiry.customerId, consentType: 'MARKETING' },
-        orderBy: { createdAt: 'desc' },
-      });
-      const privacyConsent = await this.prisma.consentHistory.findFirst({
-        where: { customerId: inquiry.customerId, consentType: 'PRIVACY' },
-        orderBy: { createdAt: 'desc' },
-      });
+    for (const inquiry of allInquiries) {
+      const [marketingConsent] = await this.db
+        .select()
+        .from(consentHistories)
+        .where(
+          and(
+            eq(consentHistories.customerId, inquiry.customerId),
+            eq(consentHistories.consentType, 'MARKETING'),
+          ),
+        )
+        .orderBy(desc(consentHistories.createdAt))
+        .limit(1);
+
+      const [privacyConsent] = await this.db
+        .select()
+        .from(consentHistories)
+        .where(
+          and(
+            eq(consentHistories.customerId, inquiry.customerId),
+            eq(consentHistories.consentType, 'PRIVACY'),
+          ),
+        )
+        .orderBy(desc(consentHistories.createdAt))
+        .limit(1);
 
       worksheet.addRow({
         name: inquiry.name,
         companyName: inquiry.companyName,
-        email: inquiry.customer.email,
+        email: inquiry.customerEmail,
         phone: inquiry.phone,
         inquiryType: inquiry.inquiryType,
         message: inquiry.message,

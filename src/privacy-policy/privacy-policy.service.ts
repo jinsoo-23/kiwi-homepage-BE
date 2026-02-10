@@ -1,5 +1,8 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Inject, HttpException, HttpStatus } from '@nestjs/common';
+import { desc } from 'drizzle-orm';
+import { DRIZZLE_TOKEN } from '../shared/database/drizzle.provider';
+import type { DrizzleDB } from '../shared/database/drizzle.provider';
+import { privacyPolicies } from '../shared/database/schema';
 import { ErrorCode } from '../shared/constants/error-codes';
 
 export interface PrivacyPolicyResponseDto {
@@ -10,12 +13,14 @@ export interface PrivacyPolicyResponseDto {
 
 @Injectable()
 export class PrivacyPolicyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB) {}
 
   async getLatest(): Promise<PrivacyPolicyResponseDto> {
-    const policy = await this.prisma.privacyPolicy.findFirst({
-      orderBy: { updatedAt: 'desc' },
-    });
+    const [policy] = await this.db
+      .select()
+      .from(privacyPolicies)
+      .orderBy(desc(privacyPolicies.updatedAt))
+      .limit(1);
 
     if (!policy) {
       throw new HttpException(

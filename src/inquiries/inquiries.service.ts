@@ -1,5 +1,12 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
+import { Injectable, Inject, HttpException, HttpStatus } from '@nestjs/common';
+import { eq, desc, isNull, and } from 'drizzle-orm';
+import { DRIZZLE_TOKEN } from '../shared/database/drizzle.provider';
+import type { DrizzleDB } from '../shared/database/drizzle.provider';
+import {
+  customers,
+  inquiries,
+  consentHistories,
+} from '../shared/database/schema';
 import { TeamsService } from '../teams/teams.service';
 import {
   CreateInquiryDto,
@@ -12,11 +19,12 @@ import {
   UpdateConsentResponseDto,
 } from './dto/update-marketing-consent.dto';
 import { ErrorCode } from '../shared/constants/error-codes';
+import { generateIdempotencyKey } from '../shared/idempotency';
 
 @Injectable()
 export class InquiriesService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB,
     private readonly teamsService: TeamsService,
   ) {}
 
@@ -35,15 +43,19 @@ export class InquiriesService {
       );
     }
 
+    // 클라이언트가 Idempotency Key를 제공하지 않으면 서버에서 생성 (5분 버킷)
+    const finalIdempotencyKey =
+      idempotencyKey || generateIdempotencyKey(dto.email, dto.phone, dto.message);
+
     // Idempotency Key로 기존 문의 조회 (중복 제출 방지)
-    if (idempotencyKey) {
-      const existingInquiry = await this.prisma.inquiry.findUnique({
-        where: { idempotencyKey },
-        include: { customer: true },
-      });
+    if (finalIdempotencyKey) {
+      const [existingInquiry] = await this.db
+        .select()
+        .from(inquiries)
+        .where(eq(inquiries.idempotencyKey, finalIdempotencyKey))
+        .limit(1);
 
       if (existingInquiry) {
-        // 이미 처리된 요청이면 기존 응답 반환
         return {
           id: existingInquiry.id,
           createdAt: existingInquiry.createdAt,
@@ -54,50 +66,51 @@ export class InquiriesService {
     }
 
     // Customer 조회 또는 생성
-    let customer = await this.prisma.customer.findUnique({
-      where: { email: dto.email },
-    });
+    const [existingCustomer] = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.email, dto.email))
+      .limit(1);
 
-    const hasPreviousInquiry = !!customer;
+    const hasPreviousInquiry = !!existingCustomer;
 
+    let customer = existingCustomer;
     if (!customer) {
-      customer = await this.prisma.customer.create({
-        data: { email: dto.email },
-      });
+      const [newCustomer] = await this.db
+        .insert(customers)
+        .values({ email: dto.email })
+        .returning();
+      customer = newCustomer;
     }
 
     // Inquiry 생성 (idempotencyKey 포함)
-    const inquiry = await this.prisma.inquiry.create({
-      data: {
+    const [inquiry] = await this.db
+      .insert(inquiries)
+      .values({
         customerId: customer.id,
-        idempotencyKey,
+        idempotencyKey: finalIdempotencyKey,
         name: dto.name,
         companyName: dto.companyName,
         phone: dto.phone,
         inquiryType: dto.inquiryType,
         message: dto.message,
-      },
-    });
+      })
+      .returning();
 
-    // ConsentHistory 추가 (MARKETING)
-    await this.prisma.consentHistory.create({
-      data: {
+    // ConsentHistory 추가 (MARKETING, PRIVACY)
+    await this.db.insert(consentHistories).values([
+      {
         customerId: customer.id,
         consentType: 'MARKETING',
         consented: dto.marketingConsent,
       },
-    });
-
-    // ConsentHistory 추가 (PRIVACY)
-    await this.prisma.consentHistory.create({
-      data: {
+      {
         customerId: customer.id,
         consentType: 'PRIVACY',
         consented: dto.privacyConsent,
       },
-    });
+    ]);
 
-    // Teams 알림 전송 (실패해도 문의 저장은 성공)
     // Teams 알림 전송 (실패해도 문의 저장은 성공)
     await this.teamsService.sendInquiryNotification({
       name: inquiry.name,
@@ -130,22 +143,37 @@ export class InquiriesService {
 
   async getConsents(query: GetConsentsQueryDto): Promise<GetConsentsResponseDto> {
     // email로 Customer 조회
-    const customer = await this.prisma.customer.findUnique({
-      where: { email: query.email },
-      include: {
-        inquiries: {
-          where: { deletedAt: null },
+    const [customer] = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.email, query.email))
+      .limit(1);
+
+    if (!customer) {
+      throw new HttpException(
+        {
+          errorCode: ErrorCode.CUSTOMER_NOT_FOUND,
+          message: 'No customer matches the provided email and phone',
         },
-      },
-    });
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    // Customer의 문의 조회
+    const customerInquiries = await this.db
+      .select()
+      .from(inquiries)
+      .where(
+        and(eq(inquiries.customerId, customer.id), isNull(inquiries.deletedAt)),
+      );
 
     // 전화번호 정규화 후 비교
     const normalizedInputPhone = this.normalizePhone(query.phone);
-    const matchingInquiry = customer?.inquiries.find(
+    const matchingInquiry = customerInquiries.find(
       (i) => this.normalizePhone(i.phone) === normalizedInputPhone,
     );
 
-    if (!customer || !matchingInquiry) {
+    if (!matchingInquiry) {
       throw new HttpException(
         {
           errorCode: ErrorCode.CUSTOMER_NOT_FOUND,
@@ -159,10 +187,17 @@ export class InquiriesService {
     const consentTypes = ['MARKETING', 'PRIVACY'];
     const consents = await Promise.all(
       consentTypes.map(async (consentType) => {
-        const latest = await this.prisma.consentHistory.findFirst({
-          where: { customerId: customer.id, consentType },
-          orderBy: { createdAt: 'desc' },
-        });
+        const [latest] = await this.db
+          .select()
+          .from(consentHistories)
+          .where(
+            and(
+              eq(consentHistories.customerId, customer.id),
+              eq(consentHistories.consentType, consentType),
+            ),
+          )
+          .orderBy(desc(consentHistories.createdAt))
+          .limit(1);
 
         return {
           consentType,
@@ -180,22 +215,37 @@ export class InquiriesService {
 
   async updateConsent(dto: UpdateConsentDto): Promise<UpdateConsentResponseDto> {
     // email로 Customer 조회
-    const customer = await this.prisma.customer.findUnique({
-      where: { email: dto.email },
-      include: {
-        inquiries: {
-          where: { deletedAt: null },
+    const [customer] = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.email, dto.email))
+      .limit(1);
+
+    if (!customer) {
+      throw new HttpException(
+        {
+          errorCode: ErrorCode.CUSTOMER_NOT_FOUND,
+          message: 'No customer matches the provided email and phone',
         },
-      },
-    });
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    // Customer의 문의 조회
+    const customerInquiries = await this.db
+      .select()
+      .from(inquiries)
+      .where(
+        and(eq(inquiries.customerId, customer.id), isNull(inquiries.deletedAt)),
+      );
 
     // 전화번호 정규화 후 비교
     const normalizedInputPhone = this.normalizePhone(dto.phone);
-    const matchingInquiry = customer?.inquiries.find(
+    const matchingInquiry = customerInquiries.find(
       (i) => this.normalizePhone(i.phone) === normalizedInputPhone,
     );
 
-    if (!customer || !matchingInquiry) {
+    if (!matchingInquiry) {
       throw new HttpException(
         {
           errorCode: ErrorCode.CUSTOMER_NOT_FOUND,
@@ -206,13 +256,14 @@ export class InquiriesService {
     }
 
     // ConsentHistory에 새 레코드 추가
-    const consent = await this.prisma.consentHistory.create({
-      data: {
+    const [consent] = await this.db
+      .insert(consentHistories)
+      .values({
         customerId: customer.id,
         consentType: dto.consentType,
         consented: dto.consented,
-      },
-    });
+      })
+      .returning();
 
     return {
       consentType: consent.consentType,
@@ -241,27 +292,54 @@ export class InquiriesService {
     ];
 
     // 모든 문의 데이터 조회 (Customer 포함)
-    const inquiries = await this.prisma.inquiry.findMany({
-      where: { deletedAt: null },
-      include: { customer: true },
-      orderBy: { createdAt: 'desc' },
-    });
+    const allInquiries = await this.db
+      .select({
+        id: inquiries.id,
+        customerId: inquiries.customerId,
+        name: inquiries.name,
+        companyName: inquiries.companyName,
+        phone: inquiries.phone,
+        inquiryType: inquiries.inquiryType,
+        message: inquiries.message,
+        status: inquiries.status,
+        createdAt: inquiries.createdAt,
+        customerEmail: customers.email,
+      })
+      .from(inquiries)
+      .innerJoin(customers, eq(inquiries.customerId, customers.id))
+      .where(isNull(inquiries.deletedAt))
+      .orderBy(desc(inquiries.createdAt));
 
     // 각 문의에 대해 최신 동의 상태 조회
-    for (const inquiry of inquiries) {
-      const marketingConsent = await this.prisma.consentHistory.findFirst({
-        where: { customerId: inquiry.customerId, consentType: 'MARKETING' },
-        orderBy: { createdAt: 'desc' },
-      });
-      const privacyConsent = await this.prisma.consentHistory.findFirst({
-        where: { customerId: inquiry.customerId, consentType: 'PRIVACY' },
-        orderBy: { createdAt: 'desc' },
-      });
+    for (const inquiry of allInquiries) {
+      const [marketingConsent] = await this.db
+        .select()
+        .from(consentHistories)
+        .where(
+          and(
+            eq(consentHistories.customerId, inquiry.customerId),
+            eq(consentHistories.consentType, 'MARKETING'),
+          ),
+        )
+        .orderBy(desc(consentHistories.createdAt))
+        .limit(1);
+
+      const [privacyConsent] = await this.db
+        .select()
+        .from(consentHistories)
+        .where(
+          and(
+            eq(consentHistories.customerId, inquiry.customerId),
+            eq(consentHistories.consentType, 'PRIVACY'),
+          ),
+        )
+        .orderBy(desc(consentHistories.createdAt))
+        .limit(1);
 
       worksheet.addRow({
         name: inquiry.name,
         companyName: inquiry.companyName,
-        email: inquiry.customer.email,
+        email: inquiry.customerEmail,
         phone: inquiry.phone,
         inquiryType: inquiry.inquiryType,
         message: inquiry.message,
