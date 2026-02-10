@@ -1,1 +1,1 @@
-export { hashPassword, verifyPassword, needsRehash } from './password.util';
+export { hashPassword, verifyPassword } from './password.util';

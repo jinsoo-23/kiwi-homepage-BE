@@ -11,7 +11,7 @@ import { DRIZZLE_TOKEN } from '../../shared/database/drizzle.provider';
 import type { DrizzleDB } from '../../shared/database/drizzle.provider';
 import { users } from '../../shared/database/schema';
 import { LoginDto } from './dto/login.dto';
-import { verifyPassword, hashPassword, needsRehash } from '../../shared/crypto';
+import { verifyPassword } from '../../shared/crypto';
 
 interface JwtPayload {
   sub: string;
@@ -55,18 +55,6 @@ export class AuthService {
         errorCode: 'INVALID_CREDENTIALS',
         message: '이메일 또는 비밀번호가 올바르지 않습니다',
       });
-    }
-
-    // 점진적 마이그레이션: bcrypt → argon2 재해시
-    if (needsRehash(user.password)) {
-      const newHash = await hashPassword(password);
-      await this.db
-        .update(users)
-        .set({ password: newHash })
-        .where(eq(users.id, user.id));
-      this.logger.log(
-        `사용자 ${user.email} 비밀번호를 Argon2로 마이그레이션 완료`,
-      );
     }
 
     const tokens = this.generateTokens(user.id, user.email);
