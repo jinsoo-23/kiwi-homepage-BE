@@ -5,15 +5,10 @@ import { DRIZZLE_TOKEN } from '../shared/database/drizzle.provider';
 import type { DrizzleDB } from '../shared/database/drizzle.provider';
 import { inquiries, customers } from '../shared/database/schema';
 import { TeamsService } from './teams.service';
-
-const MAX_RETRY_COUNT = 3;
-
-// Teams 상태 상수
-const TeamsStatus = {
-  PENDING: 'PENDING',
-  SENT: 'SENT',
-  FAILED: 'FAILED',
-} as const;
+import {
+  TeamsStatus,
+  MAX_RETRY_COUNT,
+} from '../shared/constants/teams.constants';
 
 @Injectable()
 export class TeamsRetryScheduler {
@@ -60,7 +55,9 @@ export class TeamsRetryScheduler {
       return;
     }
 
-    this.logger.log(`Found ${failedInquiries.length} failed notifications to retry`);
+    this.logger.log(
+      `Found ${failedInquiries.length} failed notifications to retry`,
+    );
 
     for (const inquiry of failedInquiries) {
       // 지수 백오프: 2^retryCount 분 후에 재시도

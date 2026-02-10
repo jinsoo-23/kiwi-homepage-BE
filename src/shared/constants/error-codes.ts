@@ -50,7 +50,10 @@ export enum ErrorCode {
 /**
  * 에러 코드별 기본 메시지 매핑
  */
-export const ERROR_MESSAGES: Record<ErrorCode, { title: string; type: string }> = {
+export const ERROR_MESSAGES: Record<
+  ErrorCode,
+  { title: string; type: string }
+> = {
   [ErrorCode.INTERNAL_ERROR]: {
     title: 'Internal Server Error',
     type: '/errors/internal',

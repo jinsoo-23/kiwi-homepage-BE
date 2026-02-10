@@ -1,4 +1,10 @@
-import { Injectable, Inject, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
 import { eq, desc, isNull, and } from 'drizzle-orm';
 import { DRIZZLE_TOKEN } from '../shared/database/drizzle.provider';
 import type { DrizzleDB } from '../shared/database/drizzle.provider';
@@ -8,13 +14,12 @@ import {
   consentHistories,
 } from '../shared/database/schema';
 import { TeamsService } from '../teams/teams.service';
-
-// Teams 상태 상수
-export const TeamsStatus = {
-  PENDING: 'PENDING',
-  SENT: 'SENT',
-  FAILED: 'FAILED',
-} as const;
+import { TeamsStatus } from '../shared/constants/teams.constants';
+import { getConsentsByCustomerIds } from '../shared/utils';
+import {
+  setupInquiryWorksheet,
+  toInquiryExcelRow,
+} from '../shared/utils/excel.util';
 import {
   CreateInquiryDto,
   CreateInquiryResponseDto,
@@ -54,7 +59,8 @@ export class InquiriesService {
 
     // 클라이언트가 Idempotency Key를 제공하지 않으면 서버에서 생성 (5분 버킷)
     const finalIdempotencyKey =
-      idempotencyKey || generateIdempotencyKey(dto.email, dto.phone, dto.message);
+      idempotencyKey ||
+      generateIdempotencyKey(dto.email, dto.phone, dto.message);
 
     // Idempotency Key로 기존 문의 조회 (중복 제출 방지)
     if (finalIdempotencyKey) {
@@ -175,7 +181,9 @@ export class InquiriesService {
     return digits.slice(-10);
   }
 
-  async getConsents(query: GetConsentsQueryDto): Promise<GetConsentsResponseDto> {
+  async getConsents(
+    query: GetConsentsQueryDto,
+  ): Promise<GetConsentsResponseDto> {
     // email로 Customer 조회
     const [customer] = await this.db
       .select()
@@ -247,7 +255,9 @@ export class InquiriesService {
     };
   }
 
-  async updateConsent(dto: UpdateConsentDto): Promise<UpdateConsentResponseDto> {
+  async updateConsent(
+    dto: UpdateConsentDto,
+  ): Promise<UpdateConsentResponseDto> {
     // email로 Customer 조회
     const [customer] = await this.db
       .select()
@@ -312,18 +322,7 @@ export class InquiriesService {
     const worksheet = workbook.addWorksheet('Inquiries');
 
     // 컬럼 정의
-    worksheet.columns = [
-      { header: 'name', key: 'name', width: 20 },
-      { header: 'company_name', key: 'companyName', width: 30 },
-      { header: 'email', key: 'email', width: 30 },
-      { header: 'phone', key: 'phone', width: 20 },
-      { header: 'inquiry_type', key: 'inquiryType', width: 20 },
-      { header: 'message', key: 'message', width: 50 },
-      { header: 'status', key: 'status', width: 15 },
-      { header: 'marketing_consent', key: 'marketingConsent', width: 20 },
-      { header: 'privacy_consent', key: 'privacyConsent', width: 20 },
-      { header: 'created_at', key: 'createdAt', width: 25 },
-    ];
+    setupInquiryWorksheet(worksheet);
 
     // 모든 문의 데이터 조회 (Customer 포함)
     const allInquiries = await this.db
@@ -344,44 +343,29 @@ export class InquiriesService {
       .where(isNull(inquiries.deletedAt))
       .orderBy(desc(inquiries.createdAt));
 
-    // 각 문의에 대해 최신 동의 상태 조회
+    // N+1 해결: 모든 고객의 동의 상태를 한 번에 조회
+    const customerIds = allInquiries.map((i) => i.customerId);
+    const consentsMap = await getConsentsByCustomerIds(this.db, customerIds);
+
+    // 행 추가
     for (const inquiry of allInquiries) {
-      const [marketingConsent] = await this.db
-        .select()
-        .from(consentHistories)
-        .where(
-          and(
-            eq(consentHistories.customerId, inquiry.customerId),
-            eq(consentHistories.consentType, 'MARKETING'),
-          ),
-        )
-        .orderBy(desc(consentHistories.createdAt))
-        .limit(1);
-
-      const [privacyConsent] = await this.db
-        .select()
-        .from(consentHistories)
-        .where(
-          and(
-            eq(consentHistories.customerId, inquiry.customerId),
-            eq(consentHistories.consentType, 'PRIVACY'),
-          ),
-        )
-        .orderBy(desc(consentHistories.createdAt))
-        .limit(1);
-
-      worksheet.addRow({
-        name: inquiry.name,
-        companyName: inquiry.companyName,
-        email: inquiry.customerEmail,
-        phone: inquiry.phone,
-        inquiryType: inquiry.inquiryType,
-        message: inquiry.message,
-        status: inquiry.status,
-        marketingConsent: marketingConsent?.consented ? 'O' : 'X',
-        privacyConsent: privacyConsent?.consented ? 'O' : 'X',
-        createdAt: inquiry.createdAt.toISOString(),
-      });
+      const consent = consentsMap.get(inquiry.customerId);
+      worksheet.addRow(
+        toInquiryExcelRow(
+          {
+            name: inquiry.name,
+            companyName: inquiry.companyName,
+            email: inquiry.customerEmail,
+            phone: inquiry.phone,
+            inquiryType: inquiry.inquiryType,
+            message: inquiry.message,
+            status: inquiry.status,
+            createdAt: inquiry.createdAt,
+          },
+          consent?.marketing ?? false,
+          consent?.privacy ?? false,
+        ),
+      );
     }
 
     // 헤더 스타일링

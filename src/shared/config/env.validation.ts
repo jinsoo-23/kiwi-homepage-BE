@@ -20,7 +20,7 @@ export class EnvironmentVariables {
   @IsEnum(Environment)
   NODE_ENV: Environment = Environment.Development;
 
-  @Transform(({ value }) => parseInt(value, 10))
+  @Transform(({ value }: { value: string }) => parseInt(value, 10))
   @IsNumber()
   PORT: number = 5001;
 
@@ -29,24 +29,24 @@ export class EnvironmentVariables {
   @IsString()
   DATABASE_URL?: string;
 
-  @ValidateIf((o) => !o.DATABASE_URL)
+  @ValidateIf((o: EnvironmentVariables) => !o.DATABASE_URL)
   @IsString()
   DB_HOST?: string;
 
-  @ValidateIf((o) => !o.DATABASE_URL)
-  @Transform(({ value }) => parseInt(value, 10))
+  @ValidateIf((o: EnvironmentVariables) => !o.DATABASE_URL)
+  @Transform(({ value }: { value: string }) => parseInt(value, 10))
   @IsNumber()
   DB_PORT?: number;
 
-  @ValidateIf((o) => !o.DATABASE_URL)
+  @ValidateIf((o: EnvironmentVariables) => !o.DATABASE_URL)
   @IsString()
   DB_USERNAME?: string;
 
-  @ValidateIf((o) => !o.DATABASE_URL)
+  @ValidateIf((o: EnvironmentVariables) => !o.DATABASE_URL)
   @IsString()
   DB_PASSWORD?: string;
 
-  @ValidateIf((o) => !o.DATABASE_URL)
+  @ValidateIf((o: EnvironmentVariables) => !o.DATABASE_URL)
   @IsString()
   DB_DATABASE?: string;
 

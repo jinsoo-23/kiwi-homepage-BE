@@ -27,7 +27,9 @@ export class TeamsService {
   /**
    * Teams로 문의 알림을 전송하고 결과를 반환합니다.
    */
-  async sendInquiryNotification(inquiry: InquiryData): Promise<TeamsNotificationResult> {
+  async sendInquiryNotification(
+    inquiry: InquiryData,
+  ): Promise<TeamsNotificationResult> {
     if (!this.webhookUrl) {
       this.logger.warn(
         'TEAMS_WEBHOOK_URL is not configured. Skipping Teams notification.',

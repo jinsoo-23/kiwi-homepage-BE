@@ -74,7 +74,13 @@ const REDACT_PATHS = [
 
             // 요청 로그에 포함할 속성
             serializers: {
-              req: (req) => ({
+              req: (req: {
+                id: string;
+                method: string;
+                url: string;
+                query: Record<string, unknown>;
+                params: Record<string, unknown>;
+              }) => ({
                 id: req.id,
                 method: req.method,
                 url: req.url,
@@ -82,7 +88,7 @@ const REDACT_PATHS = [
                 params: req.params,
                 // body는 민감정보가 redact되어 로깅됨
               }),
-              res: (res) => ({
+              res: (res: { statusCode: number }) => ({
                 statusCode: res.statusCode,
               }),
             },

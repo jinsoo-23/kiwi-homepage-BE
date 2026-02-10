@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, desc, isNull, and, or, ilike } from 'drizzle-orm';
+import { eq, desc, isNull, and } from 'drizzle-orm';
 import { DRIZZLE_TOKEN } from '../../shared/database/drizzle.provider';
 import type { DrizzleDB } from '../../shared/database/drizzle.provider';
 import {
@@ -8,6 +8,14 @@ import {
   consentHistories,
 } from '../../shared/database/schema';
 import { QueryInquiriesDto } from './dto/query-inquiries.dto';
+import {
+  getConsentsByCustomerIds,
+  getConsentByCustomerId,
+} from '../../shared/utils';
+import {
+  setupInquiryWorksheet,
+  toInquiryExcelRow,
+} from '../../shared/utils/excel.util';
 import * as ExcelJS from 'exceljs';
 
 export interface CustomerGroup {
@@ -106,7 +114,10 @@ export class AdminInquiriesService {
       const hasMarketingConsent = latestConsent?.consented ?? false;
 
       // marketingConsent 필터 적용
-      if (marketingConsent !== undefined && hasMarketingConsent !== marketingConsent) {
+      if (
+        marketingConsent !== undefined &&
+        hasMarketingConsent !== marketingConsent
+      ) {
         continue;
       }
 
@@ -114,7 +125,8 @@ export class AdminInquiriesService {
         customerId: customer.id,
         email: customer.email,
         marketingConsent: hasMarketingConsent,
-        marketingConsentUpdatedAt: latestConsent?.createdAt ?? customer.createdAt,
+        marketingConsentUpdatedAt:
+          latestConsent?.createdAt ?? customer.createdAt,
         inquiryCount: customerInquiries.length,
         inquiries: customerInquiries,
       });
@@ -164,30 +176,8 @@ export class AdminInquiriesService {
       .where(eq(customers.id, inquiry.customerId))
       .limit(1);
 
-    // 최신 동의 상태 조회
-    const [marketingConsent] = await this.db
-      .select()
-      .from(consentHistories)
-      .where(
-        and(
-          eq(consentHistories.customerId, inquiry.customerId),
-          eq(consentHistories.consentType, 'MARKETING'),
-        ),
-      )
-      .orderBy(desc(consentHistories.createdAt))
-      .limit(1);
-
-    const [privacyConsent] = await this.db
-      .select()
-      .from(consentHistories)
-      .where(
-        and(
-          eq(consentHistories.customerId, inquiry.customerId),
-          eq(consentHistories.consentType, 'PRIVACY'),
-        ),
-      )
-      .orderBy(desc(consentHistories.createdAt))
-      .limit(1);
+    // 최신 동의 상태 조회 (배치 조회)
+    const consent = await getConsentByCustomerId(this.db, inquiry.customerId);
 
     return {
       id: inquiry.id,
@@ -198,8 +188,8 @@ export class AdminInquiriesService {
       inquiryType: inquiry.inquiryType,
       message: inquiry.message,
       status: inquiry.status,
-      marketingConsent: marketingConsent?.consented ?? false,
-      privacyConsent: privacyConsent?.consented ?? false,
+      marketingConsent: consent.marketing,
+      privacyConsent: consent.privacy,
       createdAt: inquiry.createdAt,
     };
   }
@@ -272,10 +262,7 @@ export class AdminInquiriesService {
       });
     }
 
-    await this.db
-      .update(inquiries)
-      .set({ status })
-      .where(eq(inquiries.id, id));
+    await this.db.update(inquiries).set({ status }).where(eq(inquiries.id, id));
 
     return { id, status };
   }
@@ -325,56 +312,32 @@ export class AdminInquiriesService {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('문의 목록');
 
-    worksheet.columns = [
-      { header: '문의자명', key: 'name', width: 15 },
-      { header: '기업/기관명', key: 'companyName', width: 20 },
-      { header: '이메일', key: 'email', width: 25 },
-      { header: '휴대폰 번호', key: 'phone', width: 15 },
-      { header: '문의 구분', key: 'inquiryType', width: 15 },
-      { header: '문의 내용', key: 'message', width: 50 },
-      { header: '상태', key: 'status', width: 10 },
-      { header: '광고성 정보 수신', key: 'marketingConsent', width: 15 },
-      { header: '개인정보 수집 동의', key: 'privacyConsent', width: 15 },
-      { header: '생성일', key: 'createdAt', width: 20 },
-    ];
+    // 컬럼 정의
+    setupInquiryWorksheet(worksheet);
 
+    // N+1 해결: 모든 고객의 동의 상태를 한 번에 조회
+    const customerIds = allInquiries.map((i) => i.customerId);
+    const consentsMap = await getConsentsByCustomerIds(this.db, customerIds);
+
+    // 행 추가
     for (const inquiry of allInquiries) {
-      const [marketingConsent] = await this.db
-        .select()
-        .from(consentHistories)
-        .where(
-          and(
-            eq(consentHistories.customerId, inquiry.customerId),
-            eq(consentHistories.consentType, 'MARKETING'),
-          ),
-        )
-        .orderBy(desc(consentHistories.createdAt))
-        .limit(1);
-
-      const [privacyConsent] = await this.db
-        .select()
-        .from(consentHistories)
-        .where(
-          and(
-            eq(consentHistories.customerId, inquiry.customerId),
-            eq(consentHistories.consentType, 'PRIVACY'),
-          ),
-        )
-        .orderBy(desc(consentHistories.createdAt))
-        .limit(1);
-
-      worksheet.addRow({
-        name: inquiry.name,
-        companyName: inquiry.companyName,
-        email: inquiry.customerEmail,
-        phone: inquiry.phone,
-        inquiryType: inquiry.inquiryType,
-        message: inquiry.message,
-        status: inquiry.status,
-        marketingConsent: marketingConsent?.consented ? 'O' : 'X',
-        privacyConsent: privacyConsent?.consented ? 'O' : 'X',
-        createdAt: inquiry.createdAt.toISOString(),
-      });
+      const consent = consentsMap.get(inquiry.customerId);
+      worksheet.addRow(
+        toInquiryExcelRow(
+          {
+            name: inquiry.name,
+            companyName: inquiry.companyName,
+            email: inquiry.customerEmail,
+            phone: inquiry.phone,
+            inquiryType: inquiry.inquiryType,
+            message: inquiry.message,
+            status: inquiry.status,
+            createdAt: inquiry.createdAt,
+          },
+          consent?.marketing ?? false,
+          consent?.privacy ?? false,
+        ),
+      );
     }
 
     return workbook.xlsx.writeBuffer();

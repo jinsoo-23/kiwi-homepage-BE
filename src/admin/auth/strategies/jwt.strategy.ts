@@ -1,5 +1,6 @@
 import { Injectable, Inject, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
+import { ConfigService } from '@nestjs/config';
 import { Strategy } from 'passport-jwt';
 import type { FastifyRequest } from 'fastify';
 import { eq } from 'drizzle-orm';
@@ -14,18 +15,21 @@ interface JwtPayload {
 
 function extractJwtFromCookie(req: FastifyRequest): string | null {
   if (req.cookies && req.cookies.accessToken) {
-    return req.cookies.accessToken as string;
+    return req.cookies.accessToken;
   }
   return null;
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor(@Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB) {
+  constructor(
+    @Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB,
+    configService: ConfigService,
+  ) {
     super({
       jwtFromRequest: extractJwtFromCookie,
       ignoreExpiration: false,
-      secretOrKey: process.env.JWT_SECRET || 'default-jwt-secret',
+      secretOrKey: configService.getOrThrow<string>('JWT_SECRET'),
     });
   }
 

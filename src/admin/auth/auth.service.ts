@@ -1,5 +1,11 @@
-import { Injectable, Inject, UnauthorizedException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  UnauthorizedException,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_TOKEN } from '../../shared/database/drizzle.provider';
 import type { DrizzleDB } from '../../shared/database/drizzle.provider';
@@ -15,11 +21,16 @@ interface JwtPayload {
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly jwtRefreshSecret: string;
 
   constructor(
     @Inject(DRIZZLE_TOKEN) private readonly db: DrizzleDB,
     private readonly jwtService: JwtService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.jwtRefreshSecret =
+      this.configService.getOrThrow<string>('JWT_REFRESH_SECRET');
+  }
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
@@ -53,7 +64,9 @@ export class AuthService {
         .update(users)
         .set({ password: newHash })
         .where(eq(users.id, user.id));
-      this.logger.log(`사용자 ${user.email} 비밀번호를 Argon2로 마이그레이션 완료`);
+      this.logger.log(
+        `사용자 ${user.email} 비밀번호를 Argon2로 마이그레이션 완료`,
+      );
     }
 
     const tokens = this.generateTokens(user.id, user.email);
@@ -76,7 +89,7 @@ export class AuthService {
   async refresh(refreshToken: string) {
     try {
       const payload = this.jwtService.verify<JwtPayload>(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || 'default-refresh-secret',
+        secret: this.jwtRefreshSecret,
       });
 
       const [user] = await this.db
@@ -123,7 +136,7 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(payload, {
-      secret: process.env.JWT_REFRESH_SECRET || 'default-refresh-secret',
+      secret: this.jwtRefreshSecret,
       expiresIn: '7d',
     });
 
